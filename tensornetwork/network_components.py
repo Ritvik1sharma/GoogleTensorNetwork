@@ -1007,6 +1007,8 @@ class Edge:
       ValueError: If node2 and axis2 are not either both `None` or both
         not be `None`.
     """
+    if node1 is not None and node2 is not None and (name is None or name == "__unnamed_edge__"):
+      name = f'{node1.name}[{axis1}]--{node2.name}[{axis2}]'
     if (node2 is None) != (axis2 is None):
       raise ValueError(
           "node2 and axis2 must either be both None or both not be None")
@@ -1099,11 +1101,19 @@ class Edge:
     elif self.axis2 == old_axis and self.node2 is old_node:
       self.axis2 = new_axis
       self.node2 = new_node
+      # self.name = f'{self.node1.name}[{self.axis1}]--{self.node2.name}[{self.axis2}]'
     else:
       raise ValueError("Edge '{}' did not contain node '{}' on axis {}. "
                        "node1: '{}', axis1: {}, node2: '{}', axis2: {}".format(
                            self, old_node, old_axis, self.node1, self.axis1,
                            self.node2, self.axis2))
+    if self._nodes[0] is None:
+      self.name = f'None[]--{self._nodes[1].name}[{self._axes[1]}]'
+    elif self._nodes[1] is None:
+      self.name = f'{self._nodes[0].name}[{self._axes[0]}--None[]'
+    else:
+      self.name = f'{self._nodes[0].name}[{self._axes[0]}--{self._nodes[1].name}[{self._axes[1]}'
+    
 
   @property
   def node1(self) -> AbstractNode:
@@ -1851,6 +1861,8 @@ def contract(edge: Edge,
     ValueError: When edge is a dangling edge or if it already has been
       contracted.
   """
+  # print("SEE THE SHARED EDGES ", get_shared_edges(edge.node1, edge.node2))
+  
   if edge.is_dangling():
     raise ValueError("Attempting to contract dangling edge")
 
@@ -1877,7 +1889,7 @@ def contract(edge: Edge,
   new_tensor = backend.tensordot(edge.node1.tensor, edge.node2.tensor,
                                  [[edge.axis1], [edge.axis2]])
   new_node = Node(tensor=new_tensor,
-                  name=name,
+                  name=edge.node1.name + edge.node2.name,
                   axis_names=axis_names,
                   backend=backend.name)
   # edge.node1 and edge.node2 get new edges in _remove_edges
@@ -1926,7 +1938,7 @@ def contract_parallel(edge: Edge) -> AbstractNode:
   This method calls `contract_between` with the nodes connected by the edge.
 
   Args:
-    edge: The edge to contract.
+    edge: The edge to contract. 
 
   Returns:
     The new node created after contraction.
@@ -2016,6 +2028,8 @@ def contract_between(
     ValueError: If no edges are found between node1 and node2 and
       `allow_outer_product` is set to `False`.
   """
+
+  print(f"Contract {node1}, {node2}")
   for node in [node1, node2]:
     if not hasattr(node, 'backend'):
       raise TypeError('Node {} of type {} has no `backend`'.format(
@@ -2026,7 +2040,7 @@ def contract_between(
                      "{} and {}.".format(node1.name, node2.name,
                                          node1.backend.name,
                                          node2.backend.name))
-
+  # print("curr backend is ", backe)
   backend = node1.backend
   shared_edges = get_shared_edges(node1, node2)
   # Trace edges cannot be contracted using tensordot.
@@ -2040,6 +2054,7 @@ def contract_between(
     if not allow_outer_product:
       raise ValueError("No edges found between nodes '{}' and '{}' "
                        "and allow_outer_product=False.".format(node1, node2))
+    print(f"No edges found between {node1}, {node2}")
     new_node = outer_product(node1, node2, name=name)
   else:
     # Collect the axis of each node corresponding to each edge, in order.
@@ -2082,8 +2097,10 @@ def contract_between(
     ind_sort = [axes1.index(l) for l in sorted(axes1)]
     axes1 = [axes1[i] for i in ind_sort]
     axes2 = [axes2[i] for i in ind_sort]
+    print("Contraction between nodes ", node1.name, " AND ",  node2.name)
+    # print("Contract between ", end=" ")
     new_tensor = backend.tensordot(node1.tensor, node2.tensor, [axes1, axes2])
-    new_node = Node(tensor=new_tensor, name=name, backend=backend)
+    new_node = Node(tensor=new_tensor, name=node1.name + "+" + node2.name, backend=backend)
     # node1 and node2 get new edges in _remove_edges
     _remove_edges(shared_edges, node1, node2, new_node)
 

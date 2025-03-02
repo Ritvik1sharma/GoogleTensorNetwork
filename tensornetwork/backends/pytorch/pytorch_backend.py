@@ -17,6 +17,7 @@ from typing import Union
 from tensornetwork.backends import abstract_backend
 from tensornetwork.backends.pytorch import decompositions
 import numpy as np
+import torch
 
 # This might seem bad, but pytype treats tf.Tensor as Any anyway, so
 # we don't actually lose anything by doing this.
@@ -34,8 +35,10 @@ class PyTorchBackend(abstract_backend.AbstractBackend):
     global torchlib
     try:
       # pylint: disable=import-outside-toplevel
+      print("IMPORT TORCH")
       import torch
     except ImportError as err:
+      print("failed to import torch")
       raise ImportError("PyTorch not installed, please switch to a different "
                         "backend or install PyTorch.") from err
     torchlib = torch
@@ -43,18 +46,26 @@ class PyTorchBackend(abstract_backend.AbstractBackend):
 
   def tensordot(self, a: Tensor, b: Tensor,
                 axes: Union[int, Sequence[Sequence[int]]]) -> Tensor:
+    if a.is_sparse and b.is_sparse:
+      return torch.sparse.tensordot(a, b, dims=axes)      
     return torchlib.tensordot(a, b, dims=axes)
 
   def reshape(self, tensor: Tensor, shape: Tensor) -> Tensor:
+    if tensor.is_sparse:
+      return tensor.coalesce().reshape(tuple(np.array(shape).astype(int)))  # Ensure sparse tensor remains sparse
     return torchlib.reshape(tensor, tuple(np.array(shape).astype(int)))
 
   def transpose(self, tensor, perm=None) -> Tensor:
+    if tensor.is_sparse:
+      return tensor.coalesce().transpose(0, 1)  # Sparse tensor transpose    
     if perm is None:
       perm = tuple(range(tensor.ndim - 1, -1, -1))
     return tensor.permute(perm)
 
   def slice(self, tensor: Tensor, start_indices: Tuple[int, ...],
             slice_sizes: Tuple[int, ...]) -> Tensor:
+    if tensor.is_sparse:
+      return tensor.coalesce()[start_indices[0]:start_indices[1], start_indices[2]:start_indices[3]]  # Sparse tensor slicing  
     if len(start_indices) != len(slice_sizes):
       raise ValueError("Lengths of start_indices and slice_sizes must be"
                        "identical.")
@@ -71,6 +82,8 @@ class PyTorchBackend(abstract_backend.AbstractBackend):
       max_truncation_error: Optional[float] = None,
       relative: Optional[bool] = False
   ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    if tensor.is_sparse:
+      tensor = tensor.to_dense()  # Convert sparse to dense for SVD       
     return decompositions.svd(
         torchlib,
         tensor,
@@ -85,6 +98,8 @@ class PyTorchBackend(abstract_backend.AbstractBackend):
       pivot_axis: int = -1,
       non_negative_diagonal: bool = False
   ) -> Tuple[Tensor, Tensor]:
+    if tensor.is_sparse:
+      tensor = tensor.to_dense()  # Convert sparse to dense for QR    
     return decompositions.qr(torchlib, tensor, pivot_axis, non_negative_diagonal)
 
   def rq(
@@ -93,9 +108,13 @@ class PyTorchBackend(abstract_backend.AbstractBackend):
       pivot_axis: int = -1,
       non_negative_diagonal: bool = False
   ) -> Tuple[Tensor, Tensor]:
+    if tensor.is_sparse:
+      tensor = tensor.to_dense()  # Convert sparse to dense for RQ      
     return decompositions.rq(torchlib, tensor, pivot_axis, non_negative_diagonal)
 
   def shape_concat(self, values: Tensor, axis: int) -> Tensor:
+    if all(v.is_sparse for v in values):
+      return torch.sparse.cat(values, dim=axis)      
     return np.concatenate(values, axis)
 
   def shape_tensor(self, tensor: Tensor) -> Tensor:
@@ -111,15 +130,22 @@ class PyTorchBackend(abstract_backend.AbstractBackend):
     return np.prod(np.array(values))
 
   def sqrt(self, tensor: Tensor) -> Tensor:
+    if tensor.is_sparse:
+      return tensor.coalesce().sqrt()  # Sparse tensor sqrt
     return torchlib.sqrt(tensor)
 
   def convert_to_tensor(self, tensor: Tensor) -> Tensor:
+    if isinstance(tensor, torch.sparse.Tensor):
+      return tensor.coalesce()   
     result = torchlib.as_tensor(tensor)
     return result
 
   def outer_product(self, tensor1: Tensor, tensor2: Tensor) -> Tensor:
+    # pylint: disable=unused-argument
+    if tensor1.is_sparse and tensor2.is_sparse:
+      return torch.sparse.tensordot(tensor1, tensor2, dims=0)          
     return torchlib.tensordot(tensor1, tensor2, dims=0)
-  # pylint: disable=unused-argument
+  
   def einsum(self,
              expression: str,
              *tensors: Tensor,
@@ -127,6 +153,8 @@ class PyTorchBackend(abstract_backend.AbstractBackend):
     return torchlib.einsum(expression, *tensors)
 
   def norm(self, tensor: Tensor) -> Tensor:
+    if tensor.is_sparse:
+      return tensor.coalesce().norm()  # Sparse tensor norm
     return torchlib.norm(tensor)
 
   def eye(self,
